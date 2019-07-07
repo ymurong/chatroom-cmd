@@ -191,12 +191,10 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
 
     @Override
     public void onNewMessageArrived(ImprovedNioClientHandler handler, String msg) {
-// print to screen
-        System.out.println("Received-" + handler.getClientInfo() + ":" + msg);
         // do not block otherwise it will block next messages, so need async operation here
         forwardingThreadPoolExecutor.execute(() -> {
             synchronized (TCPServer.this) {
-                for (NioClientHandler nioClientHandler : nioClientHandlerList) {
+                for (ImprovedNioClientHandler nioClientHandler : improvedNioClientHandlerList) {
                     if (nioClientHandler.equals(handler)) {
                         // overlook itself
                         continue;

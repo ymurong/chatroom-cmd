@@ -19,6 +19,7 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
     private IoArgs.IoArgsEventListener receiveIoEventListener;
     private IoArgs.IoArgsEventListener sendIoEventListener;
 
+    private IoArgs receiveArgsTemp;
 
     public SocketChannelAdapter(SocketChannel socketChannel, IoProvider ioProvider, OnChannelStatusChangedListener listener) throws IOException {
         this.socketChannel = socketChannel;
@@ -27,6 +28,22 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
 
         socketChannel.configureBlocking(false);
     }
+
+    @Override
+    public void setReceiveListener(IoArgs.IoArgsEventListener listener) {
+        receiveIoEventListener = listener;
+    }
+
+    @Override
+    public boolean receiveAsync(IoArgs args) throws IOException {
+        if (isClosed.get()) {
+            throw new IOException("Current channel is closed");
+        }
+        receiveArgsTemp = args;
+        // register channel to selector or reinit its selectionkey
+        return ioProvider.registerInput(socketChannel, inputCallback);
+    }
+
 
     @Override
     public boolean sendAsync(IoArgs args, IoArgs.IoArgsEventListener listener) throws IOException {
@@ -41,17 +58,7 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
         return ioProvider.registerOutput(socketChannel, outputCallback);
     }
 
-    @Override
-    public boolean receiveAsync(IoArgs.IoArgsEventListener listener) throws IOException {
-        if (isClosed.get()) {
-            throw new IOException("Current channel is closed");
-        }
 
-        receiveIoEventListener = listener;
-
-        // register channel to selector or reinit its selectionkey
-        return ioProvider.registerInput(socketChannel, inputCallback);
-    }
 
     @Override
     public void close() throws IOException {
@@ -65,7 +72,7 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
     }
 
     /**
-     * this is a runnable
+     * this is a runnable which will be called when socket channel is readable
      */
     private final IoProvider.HandleInputCallback inputCallback = new IoProvider.HandleInputCallback() {
         @Override
@@ -74,17 +81,17 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
                 return;
             }
 
-            IoArgs args = new IoArgs();
-            IoArgs.IoArgsEventListener receiveIoEventListener = SocketChannelAdapter.this.receiveIoEventListener;
-            receiveIoEventListener.onStarted(args);
+            IoArgs args = receiveArgsTemp;
+            IoArgs.IoArgsEventListener listener = SocketChannelAdapter.this.receiveIoEventListener;
+            listener.onStarted(args);
 
             try {
-                // read operation
-                if (args.read(socketChannel) > 0 && receiveIoEventListener != null) {
-                    // complete read callback
-                    receiveIoEventListener.onCompleted(args);
-                } else{
-                    throw new IOException("Cannnot read any data from current socketChannel");
+                // readFrom operation
+                if (args.readFrom(socketChannel) > 0) {
+                    // complete readFrom callback
+                    listener.onCompleted(args);
+                } else {
+                    throw new IOException("Cannnot readFrom any data from current socketChannel");
                 }
             } catch (IOException e) {
                 CloseUtils.close(SocketChannelAdapter.this);
@@ -92,11 +99,32 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
         }
     };
 
-    private final IoProvider.HandleOutputCallback outputCallback = new IoProvider.HandleOutputCallback() {
+    /**
+     * this is a runnable which will be called when socket channel is writable
+     */
 
+    private final IoProvider.HandleOutputCallback outputCallback = new IoProvider.HandleOutputCallback() {
         @Override
         protected void canProviderOutput(Object attach) {
+            if (isClosed.get()) {
+                return;
+            }
+            IoArgs args = getAttach();
+            IoArgs.IoArgsEventListener listener = sendIoEventListener;
 
+            listener.onStarted(args);
+
+            try {
+                // writeTo operation
+                if (args.writeTo(socketChannel) > 0) {
+                    // complete writeTo callback
+                    listener.onCompleted(args);
+                } else {
+                    throw new IOException("Cannnot write any data to current socketChannel");
+                }
+            } catch (IOException e) {
+                CloseUtils.close(SocketChannelAdapter.this);
+            }
         }
     };
 

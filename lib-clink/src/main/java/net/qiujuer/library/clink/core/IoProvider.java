@@ -29,6 +29,11 @@ public interface IoProvider extends Closeable {
             canProviderOutput(attach);
         }
 
+        public <T> T getAttach() {
+            T attach = (T) this.attach;
+            return attach;
+        }
+
         public final void setAttach(Object attach) {
             this.attach = attach;
         }
