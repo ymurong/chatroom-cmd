@@ -1,5 +1,6 @@
 package net.qiujuer.library.clink.core;
 
-public abstract class ReceivePacket extends Packet {
-    public abstract void save(byte[] bytes, int count);
+import java.io.OutputStream;
+
+public abstract class ReceivePacket<T extends OutputStream> extends Packet<T> {
 }

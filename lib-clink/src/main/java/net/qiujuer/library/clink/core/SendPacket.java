@@ -1,11 +1,13 @@
 package net.qiujuer.library.clink.core;
 
-public abstract class SendPacket extends Packet {
-    private boolean isCanceled;
+import java.io.InputStream;
 
-    public abstract byte[] bytes();
+public abstract class SendPacket<T extends InputStream> extends Packet<T> {
+
+    private boolean isCanceled;
 
     public boolean isCanceled() {
         return isCanceled;
     }
+
 }

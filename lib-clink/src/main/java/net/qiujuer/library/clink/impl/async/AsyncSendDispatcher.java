@@ -7,11 +7,13 @@ import net.qiujuer.library.clink.core.Sender;
 import net.qiujuer.library.clink.utils.CloseUtils;
 
 import java.io.IOException;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class AsyncSendDispatcher implements SendDispatcher {
+public class AsyncSendDispatcher implements SendDispatcher, IoArgs.IoArgsEventProcessor {
     private final Sender sender;
     private final Queue<SendPacket> queue = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean isSending = new AtomicBoolean();
@@ -19,15 +21,21 @@ public class AsyncSendDispatcher implements SendDispatcher {
 
     private IoArgs ioArgs = new IoArgs();
     // current packet
-    private SendPacket packetTemp;
+    private SendPacket<?> packetTemp;
 
+    private ReadableByteChannel packetChannel;
     // current sending packet length
-    private int total;
+    private long total;
     // current sending packet position
-    private int position;
+    private long position;
 
+    /**
+     *
+     * @param sender SocketChannelAdapter
+     */
     public AsyncSendDispatcher(Sender sender) {
         this.sender = sender;
+        sender.setSendListener(this);
     }
 
     @Override
@@ -69,33 +77,35 @@ public class AsyncSendDispatcher implements SendDispatcher {
     }
 
     private void sendCurrentPacket() {
-        IoArgs args = ioArgs;
-
-        args.startWriting(); // init buffer
-
         if (position >= total) {
+            completePacket(position == total);
             // current packet has been sent
             sendNextPacket();
             return;
-        } else if (position == 0) {
-            // first packet, need carry length
-            args.writeLength(total);
         }
-
-        // get bytes from current packet
-        byte[] bytes = packetTemp.bytes();
-        // write bytes to Ioargs
-        int count = args.readFrom(bytes, position);
-        position += count;
-
-        // finish wraping to Ioargs
-        args.finishWriting();
-
         try {
-            sender.sendAsync(args, ioArgsEventListener);
+            sender.postSendAsync();
         } catch (IOException e) {
             closeAndNotify();
         }
+    }
+
+    /**
+     * finish packet delivery
+     *
+     * @param isSucceed
+     */
+    private void completePacket(boolean isSucceed) {
+        SendPacket packet = this.packetTemp;
+        if (packet == null) {
+            return;
+        }
+        CloseUtils.close(packet);
+        CloseUtils.close(packetChannel);
+        packetTemp = null;
+        packetChannel = null;
+        total = 0;
+        position = 0;
     }
 
     private void closeAndNotify() {
@@ -107,31 +117,10 @@ public class AsyncSendDispatcher implements SendDispatcher {
     public void close() throws IOException {
         if (isClosed.compareAndSet(false, true)) {
             isSending.set(false);
-            SendPacket packet = this.packetTemp;
-            if (packet != null) {
-                packetTemp = null;
-                CloseUtils.close(packet);
-            }
+            // closure led by exception
+            completePacket(false);
         }
     }
-
-    /**
-     * this is the Ioargs listener which will be invoked when start or finish writing to socket
-     * channel
-     */
-    private final IoArgs.IoArgsEventListener ioArgsEventListener = new IoArgs.IoArgsEventListener() {
-        @Override
-        public void onStarted(IoArgs args) {
-
-        }
-
-        @Override
-        public void onCompleted(IoArgs args) {
-            // continue to send current packet
-            sendCurrentPacket();
-        }
-    };
-
 
     @Override
     public void cancel(SendPacket packet) {
@@ -139,4 +128,33 @@ public class AsyncSendDispatcher implements SendDispatcher {
     }
 
 
+    @Override
+    public IoArgs provideIoArgs() {
+        IoArgs args = ioArgs;
+        if (packetChannel == null) {
+            packetChannel = Channels.newChannel(packetTemp.open());
+            args.limit(4);
+            args.writeLength((int) packetTemp.length());
+        } else {
+            args.limit((int) Math.min(args.capacity(), total - position));
+            try {
+                int count = args.readFrom(packetChannel);
+                position += count;
+            } catch (IOException e) {
+                e.printStackTrace();
+                return null;
+            }
+        }
+        return args;
+    }
+
+    @Override
+    public void onConsumeFailed(IoArgs args, Exception e) {
+        e.printStackTrace();
+    }
+
+    @Override
+    public void onConsumeCompleted(IoArgs args) {
+        sendCurrentPacket();
+    }
 }

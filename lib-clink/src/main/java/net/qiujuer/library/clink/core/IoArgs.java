@@ -2,19 +2,45 @@ package net.qiujuer.library.clink.core;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SocketChannel;
+import java.nio.channels.WritableByteChannel;
 
 public class IoArgs {
     private int limit = 256;
     private byte[] byteBuffer = new byte[256];
     private ByteBuffer buffer = ByteBuffer.wrap(byteBuffer);
 
+
+    /**
+     * readFrom data from ReadableByteChannel into buffer
+     *
+     * @param bytes
+     * @param offset
+     * @return
+     */
+    public int readFrom(ReadableByteChannel channel) throws IOException {
+        startWriting(); // init buffer
+        int bytesProduced = 0;
+        while (buffer.hasRemaining()) {
+            int len = channel.read(buffer);
+            if (len < 0) {
+                throw new EOFException();
+            }
+            bytesProduced += len;
+        }
+        finishWriting(); // set buffer ready to be read
+        return bytesProduced;
+    }
+
+
     /**
      * readFrom data from bytes into buffer
      *
      * @param bytes
-     * @param offset
+     * @param offset from which position where we take the data
      * @return
      */
     public int readFrom(byte[] bytes, int offset) {
@@ -22,6 +48,25 @@ public class IoArgs {
         // This method transfers bytes into this buffer from the given source array.
         buffer.put(bytes, offset, size);
         return size;
+    }
+
+    /**
+     * write data to WritableByteChannel
+     *
+     * @param bytes
+     * @param offset
+     * @return
+     */
+    public int writeTo(WritableByteChannel channel) throws IOException {
+        int bytesProduced = 0;
+        while (buffer.hasRemaining()) {
+            int len = channel.write(buffer);
+            if (len < 0) {
+                throw new EOFException();
+            }
+            bytesProduced += len;
+        }
+        return bytesProduced;
     }
 
     /**
@@ -104,7 +149,9 @@ public class IoArgs {
     }
 
     public void writeLength(int total) {
+        startWriting();
         buffer.putInt(total);
+        finishWriting();
     }
 
 
@@ -116,11 +163,34 @@ public class IoArgs {
         return buffer.capacity();
     }
 
+    /**
+     * IoArgs provider/processor; data producer/consumer
+     */
+    public interface IoArgsEventProcessor {
+        /**
+         * provide a consumbale IoArgs
+         * @return IoArgs
+         */
+        IoArgs provideIoArgs();
+
+        /**
+         * callback when consumption failed
+         * @param args IoArgs
+         * @param e Exception information
+         */
+        void onConsumeFailed(IoArgs args, Exception e);
+
+        /**
+         * consumption success
+         * @param args IoArgs
+         */
+        void onConsumeCompleted(IoArgs args);
+    }
+
     public interface IoArgsEventListener {
-
         void onStarted(IoArgs args);
-        void onCompleted(IoArgs args);
 
+        void onCompleted(IoArgs args);
     }
 
     public String bufferString() {
