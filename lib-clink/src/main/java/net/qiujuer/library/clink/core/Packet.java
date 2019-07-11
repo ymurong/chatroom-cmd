@@ -3,27 +3,43 @@ package net.qiujuer.library.clink.core;
 import java.io.Closeable;
 import java.io.IOException;
 
-public abstract class Packet<T extends Closeable> implements Closeable {
-    private T stream;
-    protected long length;
-    protected byte type;
+public abstract class Packet<Stream extends Closeable> implements Closeable {
+    // BYTES Type
+    public static final byte TYPE_MEMORY_BYTES = 1;
+    // String Type
+    public static final byte TYPE_MEMORY_STRING = 2;
+    // File Type
+    public static final byte TYPE_STREAM_FILE = 3;
+    // Long connection stream Type
+    public static final byte TYPE_STREAM_DIRECT = 4;
 
-    public byte type() {
-        return type;
-    }
+    private Stream stream;
+    protected long length;
 
     public long length() {
         return length;
     }
 
-    public final T open() {
+    public final Stream open() {
         if (stream == null) {
             stream = createStream();
         }
         return stream;
     }
 
-    protected abstract T createStream();
+    /**
+     * type get through method
+     * <p>
+     * {@link #TYPE_MEMORY_BYTES}
+     * {@link #TYPE_MEMORY_STRING}
+     * {@link #TYPE_STREAM_FILE}
+     * {@link #TYPE_STREAM_DIRECT}
+     *
+     * @return Type
+     */
+    public abstract byte type();
+
+    protected abstract Stream createStream();
 
 
     @Override
@@ -34,7 +50,7 @@ public abstract class Packet<T extends Closeable> implements Closeable {
         }
     }
 
-    protected void closeStream(T stream) throws IOException {
+    protected void closeStream(Stream stream) throws IOException {
         stream.close();
     }
 

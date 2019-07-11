@@ -5,6 +5,7 @@ import net.qiujuer.lesson.sample.server.handle.ImprovedNioClientHandler;
 import net.qiujuer.lesson.sample.server.handle.NioClientHandler;
 import net.qiujuer.library.clink.utils.CloseUtils;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -19,6 +20,9 @@ import java.util.concurrent.Executors;
 
 public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClientHandler.ClientHandlerCallback, ImprovedNioClientHandler.ClientHandlerCallback {
     private final int port;
+    private final File cachePath;
+    private final ExecutorService forwardingThreadPoolExecutor;
+
     private ClientListener listener;
     private NioClientListener nioClientListener;
     private ImprovedNioClientListener improvedNioClientListener;
@@ -26,12 +30,18 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
     private List<NioClientHandler> nioClientHandlerList = new ArrayList<>();
     private List<ImprovedNioClientHandler> improvedNioClientHandlerList = new ArrayList<>();
 
-    private final ExecutorService forwardingThreadPoolExecutor;
     private Selector selector;
     private ServerSocketChannel server;
 
     public TCPServer(int port) {
         this.port = port;
+        this.cachePath = null;
+        this.forwardingThreadPoolExecutor = Executors.newCachedThreadPool();
+    }
+
+    public TCPServer(int port, File cachePath) {
+        this.port = port;
+        this.cachePath = cachePath;
         this.forwardingThreadPoolExecutor = Executors.newCachedThreadPool();
     }
 
@@ -319,6 +329,7 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
 
             System.out.println("服务器已关闭！");
         }
+
         void exit() {
             done = true;
             // wakeup current blocking
@@ -369,7 +380,7 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
 
                             try {
                                 // client construct async thread -> start reading messages
-                                ImprovedNioClientHandler improvedNioClientHandler = new ImprovedNioClientHandler(socketChannel, TCPServer.this);
+                                ImprovedNioClientHandler improvedNioClientHandler = new ImprovedNioClientHandler(socketChannel, TCPServer.this, TCPServer.this.cachePath);
                                 // add sync handling
                                 synchronized (TCPServer.this) {
                                     improvedNioClientHandlerList.add(improvedNioClientHandler);

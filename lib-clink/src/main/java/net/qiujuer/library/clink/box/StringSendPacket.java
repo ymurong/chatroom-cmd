@@ -1,19 +1,18 @@
 package net.qiujuer.library.clink.box;
 
-import net.qiujuer.library.clink.core.SendPacket;
+public class StringSendPacket extends BytesSendPacket {
 
-import java.io.ByteArrayInputStream;
-
-public class StringSendPacket extends SendPacket<ByteArrayInputStream> {
-    private final byte[] bytes;
-
+    /**
+     * String is bytes during delivery, so we just relay the bytes and send as bytes
+     *
+     * @param msg String
+     */
     public StringSendPacket(String msg) {
-        this.bytes = msg.getBytes();
-        this.length = bytes.length;
+        super(msg.getBytes());
     }
 
     @Override
-    protected ByteArrayInputStream createStream() {
-        return new ByteArrayInputStream(bytes);
+    public byte type() {
+        return TYPE_MEMORY_STRING;
     }
 }

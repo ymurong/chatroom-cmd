@@ -1,12 +1,9 @@
 package net.qiujuer.library.clink.impl.async;
 
-import net.qiujuer.library.clink.box.StringReceivePacket;
 import net.qiujuer.library.clink.core.*;
 import net.qiujuer.library.clink.utils.CloseUtils;
 
-import javax.swing.plaf.basic.BasicInternalFrameTitlePane;
 import java.io.IOException;
-import java.lang.management.ManagementFactory;
 import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -19,7 +16,7 @@ public class AsyncReceiveDispatcher implements ReceiveDispatcher, IoArgs.IoArgsE
 
     private IoArgs ioArgs = new IoArgs();
     // current packet
-    private ReceivePacket<?> packetTemp;
+    private ReceivePacket<?, ?> packetTemp;
 
     private WritableByteChannel packetChannel;
     // current receiving packet length
@@ -35,6 +32,7 @@ public class AsyncReceiveDispatcher implements ReceiveDispatcher, IoArgs.IoArgsE
 
     @Override
     public void start() {
+        // register readable event
         registerReceive();
     }
 
@@ -67,8 +65,11 @@ public class AsyncReceiveDispatcher implements ReceiveDispatcher, IoArgs.IoArgsE
             // no existent current packet -> a new packet to receive
             // read the message length
             int length = args.readLength();
-            // init a receive packet with the exact length
-            packetTemp = new StringReceivePacket(length);
+            // TODO temporary solution
+            byte type = length > 200 ? Packet.TYPE_STREAM_FILE : Packet.TYPE_MEMORY_STRING;
+            // create a receive packet
+            packetTemp = callback.onArrivedNewPacket(type,length);
+            // establish a writable channel
             packetChannel = Channels.newChannel(packetTemp.open());
             // init a new buffer with the exact length
             total = length;
@@ -76,6 +77,7 @@ public class AsyncReceiveDispatcher implements ReceiveDispatcher, IoArgs.IoArgsE
         }
         try {
             // transfer data received from socket channel to our dispatcher buffer
+            // first time the args will be empty as already read by args.readLength();
             int count = args.writeTo(packetChannel);
             position += count;
 
@@ -105,6 +107,7 @@ public class AsyncReceiveDispatcher implements ReceiveDispatcher, IoArgs.IoArgsE
         packetChannel = null;
 
         if (packet != null) {
+            // print information that the packet has been completely received
             callback.onReceivePacketCompleted(packet);
         }
     }

@@ -2,7 +2,10 @@ package net.qiujuer.lesson.sample.client;
 
 
 import net.qiujuer.lesson.sample.client.bean.ServerInfo;
+import net.qiujuer.lesson.sample.foo.Foo;
 import net.qiujuer.library.clink.core.Connector;
+import net.qiujuer.library.clink.core.Packet;
+import net.qiujuer.library.clink.core.ReceivePacket;
 import net.qiujuer.library.clink.utils.CloseUtils;
 
 import java.io.*;
@@ -13,8 +16,10 @@ import java.net.SocketTimeoutException;
 import java.nio.channels.SocketChannel;
 
 public class ImprovedTCPClient extends Connector {
+    private final File cachePath;
 
-    public ImprovedTCPClient(SocketChannel socketChannel) throws IOException {
+    public ImprovedTCPClient(SocketChannel socketChannel, File cachePath) throws IOException {
+        this.cachePath = cachePath;
         setup(socketChannel);
     }
 
@@ -28,7 +33,21 @@ public class ImprovedTCPClient extends Connector {
         System.out.println("Connection has already been closed, cannot read data anymore...");
     }
 
-    public static ImprovedTCPClient startWith(ServerInfo info) throws IOException {
+    @Override
+    protected File createNewReceiveFile() {
+        return Foo.createRandomTemp(cachePath);
+    }
+
+    @Override
+    protected void onReceivePacket(ReceivePacket packet) {
+        super.onReceivePacket(packet);
+        if (packet.type() == Packet.TYPE_MEMORY_STRING) {
+            String string = (String) packet.entity();
+            System.out.println(key.toString() + ":" + string);
+        }
+    }
+
+    public static ImprovedTCPClient startWith(ServerInfo info, File cachePath) throws IOException {
         SocketChannel socketChannel = SocketChannel.open();
 
         // 连接本地，端口2000；超时时间3000ms
@@ -40,7 +59,7 @@ public class ImprovedTCPClient extends Connector {
 
         try {
             // 发送接收数据
-            return new ImprovedTCPClient(socketChannel);
+            return new ImprovedTCPClient(socketChannel, cachePath);
         } catch (Exception e) {
             System.out.println("Connection Exception");
             CloseUtils.close(socketChannel);
