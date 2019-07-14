@@ -101,16 +101,17 @@ public class IoArgs {
      * @throws IOException
      */
     public int readFrom(SocketChannel channel) throws IOException {
-        startWriting(); // init buffer
+        ByteBuffer buffer = this.buffer;
         int bytesProduced = 0;
-        while (buffer.hasRemaining()) {
-            int len = channel.read(buffer);
+        int len;
+
+        do {
+            len = channel.read(buffer);
             if (len < 0) {
-                throw new EOFException();
+                throw new EOFException("Cannot read any data with:" + channel);
             }
             bytesProduced += len;
-        }
-        finishWriting(); // set buffer ready to be read
+        } while (buffer.hasRemaining() && len != 0);
         return bytesProduced;
     }
 
@@ -122,14 +123,17 @@ public class IoArgs {
      * @throws IOException
      */
     public int writeTo(SocketChannel channel) throws IOException {
+        ByteBuffer buffer = this.buffer;
         int bytesProduced = 0;
-        while (buffer.hasRemaining()) {
-            int len = channel.write(buffer);
+        int len;
+
+        do {
+            len = channel.write(buffer);
             if (len < 0) {
-                throw new EOFException();
+                throw new EOFException("Cannot write any data with:" + channel);
             }
             bytesProduced += len;
-        }
+        } while (buffer.hasRemaining() && len != 0);
         return bytesProduced;
     }
 

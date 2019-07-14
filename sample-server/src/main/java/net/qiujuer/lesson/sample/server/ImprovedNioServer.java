@@ -40,8 +40,11 @@ public class ImprovedNioServer {
         String str;
         do {
             str = bufferedReader.readLine();
-            if (str == null || str.length() == 0 || "00bye00".equalsIgnoreCase(str)) {
+            if (str == null || Foo.COMMAND_EXIT.equalsIgnoreCase(str)) {
                 break;
+            }
+            if (str.length() == 0) {
+                continue;
             }
             // send string
             tcpServer.improvedNiobroadcast(str);

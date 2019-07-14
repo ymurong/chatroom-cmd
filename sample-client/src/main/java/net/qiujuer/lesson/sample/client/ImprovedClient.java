@@ -46,8 +46,12 @@ public class ImprovedClient {
         do {
             // 键盘读取一行
             String str = input.readLine();
-            if (str == null || str.length() == 0 || "00bye00".equalsIgnoreCase(str)) {
+            if (str == null || Foo.COMMAND_EXIT.equalsIgnoreCase(str)) {
                 break;
+            }
+
+            if (str.length() == 0) {
+                continue;
             }
 
             // --f url
@@ -56,7 +60,7 @@ public class ImprovedClient {
                 if (array.length >= 2) {
                     String filePath = array[1];
                     File file = new File(filePath);
-                    if(file.exists() && file.isFile()){
+                    if (file.exists() && file.isFile()) {
                         FileSendPacket packet = new FileSendPacket(file);
                         tcpClient.send(packet);
                         continue;

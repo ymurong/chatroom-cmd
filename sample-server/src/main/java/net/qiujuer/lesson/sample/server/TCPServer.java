@@ -103,7 +103,7 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
 
             System.out.println("服务器信息：" + server.getLocalAddress().toString());
 
-            // start client listener
+            // start client listener to accept new socket connection
             ImprovedNioClientListener improvedNioClientListener = this.improvedNioClientListener = new ImprovedNioClientListener();
             improvedNioClientListener.start();
         } catch (IOException e) {

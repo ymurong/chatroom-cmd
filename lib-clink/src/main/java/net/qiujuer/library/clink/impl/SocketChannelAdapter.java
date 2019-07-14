@@ -37,6 +37,8 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
         if (isClosed.get()) {
             throw new IOException("Current channel is closed");
         }
+
+        inputCallback.checkAttachNull();
         // register channel to selector or reinit its selectionkey
         return ioProvider.registerInput(socketChannel, inputCallback);
     }
@@ -51,12 +53,14 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
         if (isClosed.get()) {
             throw new IOException("Current channel is closed");
         }
+        outputCallback.checkAttachNull();
         return ioProvider.registerOutput(socketChannel, outputCallback);
     }
 
 
     /**
      * will be invoked by IOException of SocketChannelAdapter during reading or writing on socket channel
+     *
      * @throws IOException
      */
     @Override
@@ -74,26 +78,38 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
     /**
      * this is a runnable which will be called when socket channel is readable
      */
-    private final IoProvider.HandleInputCallback inputCallback = new IoProvider.HandleInputCallback() {
+    private final IoProvider.HandleProviderCallback inputCallback = new IoProvider.HandleProviderCallback() {
         @Override
-        protected void canProviderInput() {
+        protected void onProviderIo(IoArgs args) {
             if (isClosed.get()) {
                 return;
             }
 
             // this processor is set by AsyncSendDispatcher
             IoArgs.IoArgsEventProcessor processor = receiveIoEventProcessor;
-            // get a consumable IoArgs
-            IoArgs args = processor.provideIoArgs();
+            if (args == null) {
+                // get a new consumable IoArgs
+                args = processor.provideIoArgs();
+            }
 
             try {
                 if (args == null) {
                     processor.onConsumeFailed(null, new IOException("ProvideIoArgs is null."));
-                } else if (args.readFrom(socketChannel) > 0) {
-                    // 读取完成回调
-                    processor.onConsumeCompleted(args);
                 } else {
-                    processor.onConsumeFailed(args, new IOException("Cannot read any data!"));
+                    int count = args.readFrom(socketChannel);
+                    if (count == 0) {
+                        System.out.println("Current write zero data");
+                    }
+                    if (args.remained()) {
+                        // attach unconsumed args
+                        attach = args;
+                        // complete writeTo callback
+                        ioProvider.registerInput(socketChannel, this);
+                    } else {
+                        attach = null;
+                        // read fished callback
+                        processor.onConsumeCompleted(args);
+                    }
                 }
             } catch (IOException ignored) {
                 CloseUtils.close(SocketChannelAdapter.this);
@@ -105,9 +121,9 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
      * this is a runnable which will be called when socket channel is writable
      */
 
-    private final IoProvider.HandleOutputCallback outputCallback = new IoProvider.HandleOutputCallback() {
+    private final IoProvider.HandleProviderCallback outputCallback = new IoProvider.HandleProviderCallback() {
         @Override
-        protected void canProviderOutput() {
+        protected void onProviderIo(IoArgs args) {
             if (isClosed.get()) {
                 return;
             }
@@ -115,17 +131,30 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
             IoArgs.IoArgsEventProcessor processor = sendIoEventProcessor;
             // get a consumable IoArgs via dispatcher (via reader currentFrame) and prepare next frame
             // will fill IoArgs via frame (its channel)
-            IoArgs args = processor.provideIoArgs();
+            if (args == null) {
+                args = processor.provideIoArgs();
+            }
 
             try {
                 // writeTo operation to consume args
                 if (args == null) {
                     processor.onConsumeFailed(null, new IOException("ProvideIoArgs is null."));
-                } else if (args.writeTo(socketChannel) > 0) {
-                    // complete writeTo callback
-                    processor.onConsumeCompleted(args);
                 } else {
-                    processor.onConsumeFailed(args, new IOException("Cannnot write any data to current socketChannel"));
+                    int count = args.writeTo(socketChannel);
+                    if (count == 0) {
+                        System.out.println("Current write zero data!");
+                    }
+
+                    if (args.remained()) {
+                        // attach unconsumed args
+                        attach = args;
+                        // complete writeTo callback
+                        ioProvider.registerOutput(socketChannel, this);
+                    } else {
+                        attach = null;
+                        // write finished callback
+                        processor.onConsumeCompleted(args);
+                    }
                 }
             } catch (IOException e) {
                 CloseUtils.close(SocketChannelAdapter.this);
