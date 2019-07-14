@@ -4,11 +4,9 @@ import net.qiujuer.library.clink.core.IoProvider;
 import net.qiujuer.library.clink.utils.CloseUtils;
 
 import java.io.IOException;
-import java.nio.channels.ClosedChannelException;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.SocketChannel;
+import java.nio.channels.*;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -38,81 +36,27 @@ public class IoSelectorProvider implements IoProvider {
         readSelector = Selector.open();
         writeSelector = Selector.open();
 
-        inputHandlePool = Executors.newFixedThreadPool(4, new IoThreadFactory("IoProvider-Input-Thread-"));
-        outputHandlePool = Executors.newFixedThreadPool(4, new IoThreadFactory("IoProvider-Output-Thread-"));
+        inputHandlePool = Executors.newFixedThreadPool(20, new IoThreadFactory("IoProvider-Input-Thread-"));
+        outputHandlePool = Executors.newFixedThreadPool(20, new IoThreadFactory("IoProvider-Output-Thread-"));
 
         startRead();
         startWrite();
     }
 
     private void startRead() {
-        Thread thread = new Thread("Clink IoSelectorProvider ReadSelector Thread") {
-            @Override
-            public void run() {
-                while (!isClosed.get()) {
-                    try {
-                        // It returns only after at least one channel is selected,
-                        // this selector's {@link #wakeup wakeup} method is invoked
-                        //  or the current thread is interrupted, whichever comes first.
-                        if (readSelector.select() == 0) {
-                            // this usually is due to wakeup has been called
-                            waitSelection(inRegInputLocker); // should wait for registration finished if selector is being registered
-                            continue;
-                        }
-
-                        Set<SelectionKey> selectionKeys = readSelector.selectedKeys();
-                        for (SelectionKey selectionKey : selectionKeys) {
-                            if (selectionKey.isValid()) {
-                                // send event to a thread pool to handle
-                                handleSelection(selectionKey, SelectionKey.OP_READ, inputCallbackMap, inputHandlePool);
-                            }
-                        }
-                        selectionKeys.clear();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-
-                }
-            }
-
-        };
-
-        thread.setPriority(Thread.MAX_PRIORITY);
+        Thread thread = new SelectThread("Clink IoSelectorProvider ReadSelector Thread",
+                isClosed, inRegInputLocker, readSelector,
+                inputCallbackMap, inputHandlePool,
+                SelectionKey.OP_READ);
         thread.start();
     }
 
 
     private void startWrite() {
-        Thread thread = new Thread("Clink IoSelectorProvider WriteSelector Thread") {
-            @Override
-            public void run() {
-                while (!isClosed.get()) {
-                    try {
-                        // It returns only after at least one channel is selected,
-                        // this selector's {@link #wakeup wakeup} method is invoked
-                        //  or the current thread is interrupted, whichever comes first.
-                        if (writeSelector.select() == 0) {
-                            // this usually is due to wakeup has been called
-                            waitSelection(inRegOutputLocker); // should wait for registration finished if selector is being registered
-                            continue;
-                        }
-
-                        Set<SelectionKey> selectionKeys = writeSelector.selectedKeys();
-                        for (SelectionKey selectionKey : selectionKeys) {
-                            if (selectionKey.isValid()) {
-                                // send event to a thread pool to handle
-                                handleSelection(selectionKey, SelectionKey.OP_WRITE, outputCallbackMap, outputHandlePool);
-                            }
-                        }
-                        selectionKeys.clear();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        };
-
-        thread.setPriority(Thread.MAX_PRIORITY);
+        Thread thread = new SelectThread("Clink IoSelectorProvider WriteSelector Thread",
+                isClosed, inRegOutputLocker, writeSelector,
+                outputCallbackMap, outputHandlePool,
+                SelectionKey.OP_WRITE);
         thread.start();
     }
 
@@ -129,12 +73,12 @@ public class IoSelectorProvider implements IoProvider {
 
     @Override
     public void unRegisterInput(SocketChannel channel) {
-        unRegisterSelection(channel,readSelector,inputCallbackMap);
+        unRegisterSelection(channel, readSelector, inputCallbackMap, inRegInputLocker);
     }
 
     @Override
     public void unRegisterOutput(SocketChannel channel) {
-        unRegisterSelection(channel,writeSelector,outputCallbackMap);
+        unRegisterSelection(channel, writeSelector, outputCallbackMap, inRegOutputLocker);
     }
 
     @Override
@@ -145,9 +89,6 @@ public class IoSelectorProvider implements IoProvider {
 
             inputCallbackMap.clear();
             outputCallbackMap.clear();
-
-            readSelector.wakeup();
-            writeSelector.wakeup();
 
             CloseUtils.close(readSelector, writeSelector);
         }
@@ -170,6 +111,7 @@ public class IoSelectorProvider implements IoProvider {
 
     /**
      * register selector to socket channel, every channel should has a selectionkey given by selector
+     *
      * @param channel
      * @param selector
      * @param registerOps
@@ -208,7 +150,9 @@ public class IoSelectorProvider implements IoProvider {
                 }
 
                 return key;
-            } catch (ClosedChannelException e) {
+            } catch (ClosedChannelException
+                    | CancelledKeyException
+                    | ClosedSelectorException e) {
                 return null;
             } finally {
                 // release lock
@@ -224,39 +168,127 @@ public class IoSelectorProvider implements IoProvider {
     }
 
     private static void unRegisterSelection(SocketChannel channel, Selector selector,
-                                            Map<SelectionKey, Runnable> map) {
-        if (channel.isRegistered()) {
-            SelectionKey key = channel.keyFor(selector);
-            if (key != null) {
-                // 取消监听的方法
-                key.cancel();
-                map.remove(key);
-                //  to make sure that the thread that has called the select() method which is blocked,
-                // can be made to leave the select() method, even if no channels are yet ready.
-                // continue to next select as one selection key has been removed
-                selector.wakeup();
+                                            Map<SelectionKey, Runnable> map,
+                                            AtomicBoolean locker) {
+        //noinspection SynchronizationOnLocalVariableOrMethodParameter
+        synchronized (locker) {
+            locker.set(true);
+            selector.wakeup();
+            try {
+                if (channel.isRegistered()) {
+                    SelectionKey key = channel.keyFor(selector);
+                    if (key != null) {
+                        // 取消监听的方法
+                        key.cancel();
+                        map.remove(key);
+                    }
+                }
+            } finally {
+                locker.set(false);
+                try {
+                    locker.notifyAll();
+                } catch (Exception ignored) {
+                }
             }
         }
     }
 
 
-    private void handleSelection(SelectionKey key, int keyOps,
-                                 HashMap<SelectionKey, Runnable> map,
-                                 ExecutorService pool) {
-        // 重点
-        // 取消继续对keyOps的监听
-        // OP_READ = 0x00000001, OP_WRITE = Ox00000100
-        // erase keyops by doing AND NOT operation
-        key.interestOps(key.interestOps() & ~keyOps);
+    private static void handleSelection(SelectionKey key, int keyOps,
+                                        HashMap<SelectionKey, Runnable> map,
+                                        ExecutorService pool, AtomicBoolean locker) {
+
+        synchronized (locker) {
+            try {
+                // 重点
+                // 取消继续对keyOps的监听
+                // OP_READ = 0x00000001, OP_WRITE = Ox00000100
+                // erase keyops by doing AND NOT operation
+                key.interestOps(key.readyOps() & ~keyOps);
+            } catch (CancelledKeyException e) {
+                return;
+            }
+        }
+
         Runnable runnable = null;
         try {
             runnable = map.get(key);
         } catch (Exception ignored) {
+
         }
 
-        if (runnable != null && !inputHandlePool.isShutdown()) {
+        if (runnable != null && !pool.isShutdown()) {
             // async call
             pool.execute(runnable);
+        }
+    }
+
+
+    static class SelectThread extends Thread {
+        private final AtomicBoolean isClosed;
+        private final AtomicBoolean locker;
+        private final Selector selector;
+        private final HashMap<SelectionKey, Runnable> callMap;
+        private final ExecutorService pool;
+        private final int keyOps;
+
+        SelectThread(String name,
+                     AtomicBoolean isClosed, AtomicBoolean locker,
+                     Selector selector,
+                     HashMap<SelectionKey, Runnable> callMap,
+                     ExecutorService pool, int keyOps) {
+            super(name);
+            this.isClosed = isClosed;
+            this.locker = locker;
+            this.selector = selector;
+            this.callMap = callMap;
+            this.pool = pool;
+            this.keyOps = keyOps;
+            this.setPriority(Thread.MAX_PRIORITY);
+        }
+
+        @Override
+        public void run() {
+            super.run();
+            AtomicBoolean locker = this.locker;
+            AtomicBoolean isClosed = this.isClosed;
+            Selector selector = this.selector;
+            HashMap<SelectionKey, Runnable> callMap = this.callMap;
+            ExecutorService pool = this.pool;
+            int keyOps = this.keyOps;
+
+
+            while (!isClosed.get()) {
+                try {
+                    // It returns only after at least one channel is selected,
+                    // this selector's {@link #wakeup wakeup} method is invoked
+                    //  or the current thread is interrupted, whichever comes first.
+                    if (selector.select() == 0) {
+                        // this usually is due to wakeup has been called
+                        // should wait for registration finished if selector is being registered
+                        waitSelection(locker);
+                        continue;
+                    } else if (locker.get()) {
+                        waitSelection(locker);
+                    }
+
+                    Set<SelectionKey> selectionKeys = selector.selectedKeys();
+                    Iterator<SelectionKey> iterator = selectionKeys.iterator();
+                    while (iterator.hasNext()) {
+                        SelectionKey selectionKey = iterator.next();
+                        if (selectionKey.isValid()) {
+                            // send event to a thread pool to handle
+                            handleSelection(selectionKey,
+                                    keyOps, callMap, pool, locker);
+                        }
+                        iterator.remove();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } catch (ClosedSelectorException ignored) {
+                    break;
+                }
+            }
         }
     }
 

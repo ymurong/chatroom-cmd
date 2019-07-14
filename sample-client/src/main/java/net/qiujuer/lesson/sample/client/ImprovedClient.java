@@ -46,7 +46,7 @@ public class ImprovedClient {
         do {
             // 键盘读取一行
             String str = input.readLine();
-            if ("00bye00".equalsIgnoreCase(str)) {
+            if (str == null || str.length() == 0 || "00bye00".equalsIgnoreCase(str)) {
                 break;
             }
 
@@ -67,9 +67,6 @@ public class ImprovedClient {
             // send string
             tcpClient.send(str);
 
-            if ("00bye00".equalsIgnoreCase(str)) {
-                break;
-            }
         } while (true);
 
     }

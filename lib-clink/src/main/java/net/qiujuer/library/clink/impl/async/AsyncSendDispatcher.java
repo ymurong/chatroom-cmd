@@ -7,30 +7,19 @@ import net.qiujuer.library.clink.core.Sender;
 import net.qiujuer.library.clink.utils.CloseUtils;
 
 import java.io.IOException;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class AsyncSendDispatcher implements SendDispatcher, IoArgs.IoArgsEventProcessor {
+public class AsyncSendDispatcher implements SendDispatcher, IoArgs.IoArgsEventProcessor, AsyncPacketReader.PacketProvider {
     private final Sender sender;
     private final Queue<SendPacket> queue = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean isSending = new AtomicBoolean();
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
 
-    private IoArgs ioArgs = new IoArgs();
-    // current packet
-    private SendPacket<?> packetTemp;
-
-    private ReadableByteChannel packetChannel;
-    // current sending packet length
-    private long total;
-    // current sending packet position
-    private long position;
+    private final AsyncPacketReader reader = new AsyncPacketReader(this);
 
     /**
-     *
      * @param sender SocketChannelAdapter
      */
     public AsyncSendDispatcher(Sender sender) {
@@ -40,121 +29,107 @@ public class AsyncSendDispatcher implements SendDispatcher, IoArgs.IoArgsEventPr
 
     @Override
     public void send(SendPacket packet) {
+        // put packet in queue
         queue.offer(packet);
-        if (isSending.compareAndSet(false, true)) {
-            sendNextPacket();
-        }
+        requestSend();
     }
 
-    private SendPacket takePacket() {
+    @Override
+    public void cancel(SendPacket packet) {
+        boolean ret = queue.remove(packet);
+        if (ret) {
+            packet.cancel();
+            return;
+        }
+        reader.cancel(packet);
+    }
+
+    @Override
+    public SendPacket takePacket() {
         SendPacket packet = queue.poll();
-        if (packet != null && packet.isCanceled()) {
+        if (packet == null) {
+            return null;
+        }
+
+        if (packet.isCanceled()) {
             // canceled, no need to send
             return takePacket();
         }
         return packet;
     }
 
-    private void sendNextPacket() {
-        SendPacket temp = packetTemp;
-        if (temp != null) {
-            // if current packet is not null to prevent memory leak
-            CloseUtils.close(temp);
-        }
-
-        // set current packet
-        SendPacket packet = packetTemp = takePacket();
-        if (packet == null) {
-            // queue is empty, set not sending status
-            isSending.set(false);
-            return;
-        }
-
-        total = packet.length();
-        position = 0;
-
-        sendCurrentPacket();
+    @Override
+    public void completedPacket(SendPacket packet, boolean isSucceed) {
+        CloseUtils.close(packet);
     }
 
-    private void sendCurrentPacket() {
-        if (position >= total) {
-            completePacket(position == total);
-            // current packet has been sent
-            sendNextPacket();
-            return;
-        }
-        try {
-            sender.postSendAsync();
-        } catch (IOException e) {
-            closeAndNotify();
+    /**
+     * request network to send data
+     */
+    private void requestSend() {
+        synchronized (isSending) {
+            if (isSending.get() || isClosed.get()) {
+                return;
+            }
+            // let reader to take a packet from dispatcher
+            // return true means there is data to be sent
+            if (reader.requestTakePacket()) {
+                // if packet send is not canceled then request send
+                // by here, the first frame has been already prepared as not canceled
+                try {
+                    boolean isSucceed = sender.postSendAsync();
+                    if (isSucceed) {
+                        isSending.set(true);
+                    }
+                } catch (IOException e) {
+                    closeAndNotify();
+                }
+            }
         }
     }
 
     /**
-     * finish packet delivery
-     *
-     * @param isSucceed
+     * will be invoked if network exception
      */
-    private void completePacket(boolean isSucceed) {
-        SendPacket packet = this.packetTemp;
-        if (packet == null) {
-            return;
-        }
-        CloseUtils.close(packet);
-        CloseUtils.close(packetChannel);
-        packetTemp = null;
-        packetChannel = null;
-        total = 0;
-        position = 0;
-    }
-
     private void closeAndNotify() {
         CloseUtils.close(this);
     }
 
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (isClosed.compareAndSet(false, true)) {
-            isSending.set(false);
             // closure led by exception
-            completePacket(false);
+            reader.close();
+            // clear queue to prevent memory leek
+            queue.clear();
+            synchronized (isSending) {
+                isSending.set(false);
+            }
         }
-    }
-
-    @Override
-    public void cancel(SendPacket packet) {
-
     }
 
 
     @Override
     public IoArgs provideIoArgs() {
-        IoArgs args = ioArgs;
-        if (packetChannel == null) {
-            packetChannel = Channels.newChannel(packetTemp.open());
-            args.limit(4);
-            args.writeLength((int) packetTemp.length());
-        } else {
-            args.limit((int) Math.min(args.capacity(), total - position));
-            try {
-                int count = args.readFrom(packetChannel);
-                position += count;
-            } catch (IOException e) {
-                e.printStackTrace();
-                return null;
-            }
-        }
-        return args;
+        return isClosed.get() ? null : reader.fillData();
     }
 
     @Override
     public void onConsumeFailed(IoArgs args, Exception e) {
         e.printStackTrace();
+        synchronized (isSending) {
+            isSending.set(false);
+        }
+        // continue to request to send current data
+        requestSend();
     }
 
     @Override
     public void onConsumeCompleted(IoArgs args) {
-        sendCurrentPacket();
+        synchronized (isSending) {
+            isSending.set(false);
+        }
+        requestSend();
     }
 }

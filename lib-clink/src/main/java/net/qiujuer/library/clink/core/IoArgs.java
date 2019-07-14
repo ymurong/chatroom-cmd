@@ -13,6 +13,15 @@ public class IoArgs {
     private byte[] byteBuffer = new byte[256];
     private ByteBuffer buffer = ByteBuffer.wrap(byteBuffer);
 
+    public int readFrom(byte[] bytes, int offset, int count) {
+        int size = Math.min(count, buffer.remaining());
+        // This method transfers bytes into this buffer from the given source array.
+        if (size <= 0) {
+            return 0;
+        }
+        buffer.put(bytes, offset, size);
+        return size;
+    }
 
     /**
      * readFrom data from ReadableByteChannel into buffer
@@ -22,7 +31,7 @@ public class IoArgs {
      * @return
      */
     public int readFrom(ReadableByteChannel channel) throws IOException {
-        startWriting(); // init buffer
+        // startWriting(); // init buffer
         int bytesProduced = 0;
         while (buffer.hasRemaining()) {
             int len = channel.read(buffer);
@@ -31,7 +40,7 @@ public class IoArgs {
             }
             bytesProduced += len;
         }
-        finishWriting(); // set buffer ready to be read
+        // finishWriting(); // set buffer ready to be read
         return bytesProduced;
     }
 
@@ -145,13 +154,7 @@ public class IoArgs {
      * @param limit
      */
     public void limit(int limit) {
-        this.limit = limit;
-    }
-
-    public void writeLength(int total) {
-        startWriting();
-        buffer.putInt(total);
-        finishWriting();
+        this.limit = Math.min(limit, buffer.capacity());
     }
 
 
@@ -163,25 +166,49 @@ public class IoArgs {
         return buffer.capacity();
     }
 
+    public boolean remained() {
+        return buffer.remaining() > 0;
+    }
+
+    /**
+     * @param size the size of data that need to be filled
+     * @return the size of data filled
+     */
+    public int fillEmpty(int size) {
+        int fillSize = Math.min(size, buffer.remaining());
+        buffer.position(buffer.position() + fillSize);
+        return fillSize;
+    }
+
+    public int setEmpty(int size) {
+        int emptySize = Math.min(size, buffer.remaining());
+        buffer.position(buffer.position() + emptySize);
+        return emptySize;
+    }
+
+
     /**
      * IoArgs provider/processor; data producer/consumer
      */
     public interface IoArgsEventProcessor {
         /**
          * provide a consumbale IoArgs
+         *
          * @return IoArgs
          */
         IoArgs provideIoArgs();
 
         /**
          * callback when consumption failed
+         *
          * @param args IoArgs
-         * @param e Exception information
+         * @param e    Exception information
          */
         void onConsumeFailed(IoArgs args, Exception e);
 
         /**
          * consumption success
+         *
          * @param args IoArgs
          */
         void onConsumeCompleted(IoArgs args);

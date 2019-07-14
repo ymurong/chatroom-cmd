@@ -54,5 +54,13 @@ public abstract class Packet<Stream extends Closeable> implements Closeable {
         stream.close();
     }
 
+    /**
+     * supplementary header info
+     *
+     * @return byte array，maximum 255
+     */
+    public byte[] headerInfo() {
+        return null;
+    }
 
 }

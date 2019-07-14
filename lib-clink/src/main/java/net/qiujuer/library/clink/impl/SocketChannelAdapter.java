@@ -51,11 +51,14 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
         if (isClosed.get()) {
             throw new IOException("Current channel is closed");
         }
-        // put the data that is  going to be sent into callback
         return ioProvider.registerOutput(socketChannel, outputCallback);
     }
 
 
+    /**
+     * will be invoked by IOException of SocketChannelAdapter during reading or writing on socket channel
+     * @throws IOException
+     */
     @Override
     public void close() throws IOException {
         if (isClosed.compareAndSet(false, true)) {
@@ -63,6 +66,7 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
             ioProvider.unRegisterOutput(socketChannel);
             CloseUtils.close(socketChannel);
             // callback when channel closed
+            // notify connector in order to close resources
             listener.onChannelClosed(socketChannel);
         }
     }
@@ -83,14 +87,15 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
             IoArgs args = processor.provideIoArgs();
 
             try {
-                // readFrom operation
-                if (args.readFrom(socketChannel) > 0) {
-                    // complete readFrom callback
+                if (args == null) {
+                    processor.onConsumeFailed(null, new IOException("ProvideIoArgs is null."));
+                } else if (args.readFrom(socketChannel) > 0) {
+                    // 读取完成回调
                     processor.onConsumeCompleted(args);
                 } else {
-                    processor.onConsumeFailed(args,new IOException("Cannnot readFrom any data from current socketChannel"));
+                    processor.onConsumeFailed(args, new IOException("Cannot read any data!"));
                 }
-            } catch (IOException e) {
+            } catch (IOException ignored) {
                 CloseUtils.close(SocketChannelAdapter.this);
             }
         }
@@ -108,12 +113,15 @@ public class SocketChannelAdapter implements Sender, Receiver, Cloneable {
             }
 
             IoArgs.IoArgsEventProcessor processor = sendIoEventProcessor;
-            // get a consumable IoArgs
+            // get a consumable IoArgs via dispatcher (via reader currentFrame) and prepare next frame
+            // will fill IoArgs via frame (its channel)
             IoArgs args = processor.provideIoArgs();
 
             try {
                 // writeTo operation to consume args
-                if (args.writeTo(socketChannel) > 0) {
+                if (args == null) {
+                    processor.onConsumeFailed(null, new IOException("ProvideIoArgs is null."));
+                } else if (args.writeTo(socketChannel) > 0) {
                     // complete writeTo callback
                     processor.onConsumeCompleted(args);
                 } else {

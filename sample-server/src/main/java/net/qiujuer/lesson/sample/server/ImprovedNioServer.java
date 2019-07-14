@@ -1,6 +1,7 @@
 package net.qiujuer.lesson.sample.server;
 
 import net.qiujuer.lesson.sample.foo.Foo;
+import net.qiujuer.lesson.sample.foo.FooGui;
 import net.qiujuer.lesson.sample.foo.constants.TCPConstants;
 import net.qiujuer.library.clink.core.IoContext;
 import net.qiujuer.library.clink.impl.IoSelectorProvider;
@@ -26,11 +27,20 @@ public class ImprovedNioServer {
 
         UDPProvider.start(TCPConstants.PORT_SERVER);
 
+        // 启动Gui界面
+        FooGui gui = new FooGui("Clink-Server", new FooGui.Callback() {
+            @Override
+            public Object[] takeText() {
+                return tcpServer.getStatusString();
+            }
+        });
+        gui.doShow();
+
         BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(System.in));
         String str;
         do {
             str = bufferedReader.readLine();
-            if("00bye00".equalsIgnoreCase(str)){
+            if (str == null || str.length() == 0 || "00bye00".equalsIgnoreCase(str)) {
                 break;
             }
             // send string
@@ -40,5 +50,6 @@ public class ImprovedNioServer {
         UDPProvider.stop();
         tcpServer.stop();
         IoContext.close();
+        gui.doDismiss();
     }
 }

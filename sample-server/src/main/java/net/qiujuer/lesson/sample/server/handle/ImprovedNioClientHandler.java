@@ -26,6 +26,14 @@ public class ImprovedNioClientHandler extends Connector {
     }
 
 
+    /**
+     * close connector =>
+     *         receiveDispatcher.close();
+     *         sendDispatcher.close();
+     *         sender.close();
+     *         receiver.close();
+     *         channel.close();
+     */
     public void exit() {
         CloseUtils.close(this);
         System.out.println("客户端已退出：" + clientInfo);
@@ -34,6 +42,7 @@ public class ImprovedNioClientHandler extends Connector {
     @Override
     public void onChannelClosed(SocketChannel socketChannel) {
         super.onChannelClosed(socketChannel);
+        // close connector and remove handler from server
         exitBySelf();
     }
 
@@ -52,7 +61,7 @@ public class ImprovedNioClientHandler extends Connector {
         super.onReceivePacket(packet);
         if (packet.type() == Packet.TYPE_MEMORY_STRING) {
             String string = (String) packet.entity();
-            System.out.println(this.getClass().getCanonicalName() + ": " + key.toString() + ":" + string);
+            // System.out.println(this.getClass().getCanonicalName() + ": " + key.toString() + "> " + string);
             clientHandlerCallback.onNewMessageArrived(this, string);
         }
     }

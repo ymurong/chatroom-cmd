@@ -33,6 +33,9 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
     private Selector selector;
     private ServerSocketChannel server;
 
+    private long receiveSize;
+    private long sendSize;
+
     public TCPServer(int port) {
         this.port = port;
         this.cachePath = null;
@@ -143,6 +146,7 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
         for (ImprovedNioClientHandler improvedNioClientHandler : improvedNioClientHandlerList) {
             forwardingThreadPoolExecutor.execute(() -> improvedNioClientHandler.send(str));
         }
+        sendSize += improvedNioClientHandlerList.size();
     }
 
     @Override
@@ -169,6 +173,17 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
             }
 
         });
+    }
+
+    /**
+     * 获取当前的状态信息
+     */
+    Object[] getStatusString() {
+        return new String[]{
+                "客户端数量：" + improvedNioClientHandlerList.size(),
+                "发送数量：" + sendSize,
+                "接收数量：" + receiveSize
+        };
     }
 
     @Override
@@ -201,6 +216,7 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
 
     @Override
     public void onNewMessageArrived(ImprovedNioClientHandler handler, String msg) {
+        receiveSize++;
         // do not block otherwise it will block next messages, so need async operation here
         forwardingThreadPoolExecutor.execute(() -> {
             synchronized (TCPServer.this) {
@@ -210,6 +226,7 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
                         continue;
                     }
                     nioClientHandler.send(msg);
+                    sendSize++;
                 }
             }
         });
@@ -384,6 +401,7 @@ public class TCPServer implements ClientHandler.ClientHandlerCallback, NioClient
                                 // add sync handling
                                 synchronized (TCPServer.this) {
                                     improvedNioClientHandlerList.add(improvedNioClientHandler);
+                                    System.out.println("CURRENT CLIENT NUMBER：" + clientHandlerList.size());
                                 }
                             } catch (IOException e) {
                                 e.printStackTrace();
